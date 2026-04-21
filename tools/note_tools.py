@@ -1,12 +1,36 @@
-"""Placeholder note-oriented tools for future workflow memory."""
+"""Writable note tool for scratch run output."""
 
-from schemas.tool_schemas import BaseToolOutput
+from pathlib import Path
+
+from schemas.tool_schemas import ToolStatus, WriteNoteResult
 
 
-def record_note() -> BaseToolOutput:
-    """Return a placeholder result for future note-taking helpers."""
+def write_note(note_path: str, content: str) -> WriteNoteResult:
+    """Append note content to a plain-text or markdown file."""
 
-    return BaseToolOutput(
-        tool_name="record_note",
-        message="Note writing is not implemented in the scaffold phase.",
+    path = Path(note_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as note_file:
+            note_file.write(content)
+    except OSError as exc:
+        return WriteNoteResult(
+            tool_name="write_note",
+            status=ToolStatus.ERROR,
+            note_path=str(path),
+            error=f"Unable to write note: {exc}",
+        )
+
+    return WriteNoteResult(
+        tool_name="write_note",
+        status=ToolStatus.SUCCESS,
+        note_path=str(path),
+        characters_written=len(content),
+        mode="append",
     )
+
+
+def record_note(note_path: str, content: str) -> WriteNoteResult:
+    """Compatibility wrapper for the scaffolded package export."""
+
+    return write_note(note_path=note_path, content=content)

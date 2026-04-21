@@ -2,7 +2,7 @@
 
 RepoPilot is a local Python CLI project that will grow into a multi-agent repository assistant. This repository is the bootstrap for the GitHub project `multi-agent-repo-orchestrator`, with a clean package layout, a minimal runnable CLI, and an Ollama readiness check.
 
-Current status: startup health-check phase. The codebase currently focuses on structure, local Ollama connectivity, and basic runtime validation only; agent logic, repo analysis, and orchestration are not implemented yet.
+Current status: local runtime and tool-layer phase. The codebase currently includes a minimal CLI, local Ollama health checks, and a first pass of structured repository tools; agent logic and orchestration are not implemented yet.
 
 ## Setup
 
@@ -23,6 +23,10 @@ Run the startup health check with:
 ```bash
 python main.py health
 ```
+
+## Tool Layer
+
+The repository now includes a small structured tool layer for file listing, code search, file reads, bounded file chunk reads, and note writing. These tools are intended for later agent phases and are read-only except for note appends.
 
 ## Planned Architecture
 
