@@ -1,0 +1,34 @@
+# RepoPilot
+
+RepoPilot is a local Python CLI project that will grow into a multi-agent repository assistant. This repository is the bootstrap for the GitHub project `multi-agent-repo-orchestrator`, with a clean package layout, a minimal runnable CLI, and an Ollama readiness check.
+
+Current status: startup health-check phase. The codebase currently focuses on structure, local Ollama connectivity, and basic runtime validation only; agent logic, repo analysis, and orchestration are not implemented yet.
+
+## Setup
+
+Use Python 3.11 and install the existing dependencies:
+
+```bash
+pip install -r requirements.txt
+python main.py --help
+python main.py health
+```
+
+## Ollama Requirements
+
+RepoPilot expects a local Ollama server running at `http://127.0.0.1:11434` by default and uses `qwen2.5-coder:7b` as the default model. You can override these with `OLLAMA_BASE_URL` and `OLLAMA_MODEL` if needed.
+
+Run the startup health check with:
+
+```bash
+python main.py health
+```
+
+## Planned Architecture
+
+The project is planned around four agent roles:
+
+- Planner
+- Analyst
+- Implementation Planner
+- Reviewer
