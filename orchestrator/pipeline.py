@@ -1,12 +1,14 @@
-"""Fixed end-to-end orchestration pipeline."""
+"""Fixed end-to-end orchestration pipeline with run artifacts."""
 
 from datetime import datetime
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 from agents.analyst import AnalystAgent
 from agents.implementation_planner import ImplementationPlannerAgent
 from agents.planner import PlannerAgent
 from agents.reviewer import ReviewerAgent
+from config import get_config
 from memory.run_state import RunState
 from schemas.agent_schemas import (
     AgentStatus,
@@ -16,6 +18,14 @@ from schemas.agent_schemas import (
     ReviewerOutput,
 )
 from schemas.run_schemas import FinalOutput, RunLifecycleStatus
+from utils.logging import (
+    build_summary_markdown,
+    create_run_artifact_dir,
+    ensure_notes_file,
+    read_text_if_exists,
+    write_json_file,
+    write_text_file,
+)
 
 
 class Pipeline:
@@ -30,86 +40,158 @@ class Pipeline:
         self.implementation_planner = ImplementationPlannerAgent()
         self.reviewer = ReviewerAgent()
         self.last_run_state: RunState | None = None
+        self.last_artifact_dir: Path | None = None
+        self.last_trace: dict[str, Any] | None = None
 
     def run(self, repo_path: str, user_task: str, verbose: bool = False) -> FinalOutput:
         """Execute the fixed multi-agent pipeline and return a final structured result."""
 
+        config = get_config()
+        started_at = datetime.utcnow()
+        artifact_dir = create_run_artifact_dir(config.runs_directory, user_task, started_at)
+        notes_path = artifact_dir / "notes.md"
+        run_id = self._build_run_id(started_at)
+
         state = RunState.initialize(
-            run_id=self._build_run_id(),
+            run_id=run_id,
             user_task=user_task,
             repo_path=repo_path,
+            notes_path=str(notes_path),
         )
         state.status = RunLifecycleStatus.IN_PROGRESS
         state.touch()
+
+        trace = self._initialize_trace(
+            run_id=run_id,
+            repo_path=repo_path,
+            user_task=user_task,
+            verbose=verbose,
+            started_at=started_at,
+            artifact_dir=artifact_dir,
+            notes_path=notes_path,
+        )
+
         self.last_run_state = state
+        self.last_artifact_dir = artifact_dir
+        self.last_trace = trace
+        self._write_input_artifact(artifact_dir, state, verbose, started_at)
 
-        self._emit(verbose, "starting planner")
-        planner_result = self._run_planner(state, user_task)
-        if isinstance(planner_result, FinalOutput):
+        final_output: FinalOutput | None = None
+
+        try:
+            self._emit(verbose, "starting planner")
+            planner_result = self._run_planner(state, trace, user_task)
+            if isinstance(planner_result, FinalOutput):
+                final_output = planner_result
+                self._emit(verbose, "final assembly complete")
+                return final_output
+            planner_output = planner_result
+            self._emit(verbose, "planner complete")
+
+            self._emit(verbose, "starting analyst")
+            analyst_result = self._run_analyst(
+                state,
+                trace,
+                repo_path,
+                user_task,
+                planner_output,
+                verbose,
+            )
+            if isinstance(analyst_result, FinalOutput):
+                final_output = analyst_result
+                self._emit(verbose, "final assembly complete")
+                return final_output
+            analyst_output = analyst_result
+            self._emit(verbose, "analyst complete")
+
+            self._emit(verbose, "starting implementation planner")
+            implementation_result = self._run_implementation_planner(
+                state,
+                trace,
+                user_task,
+                planner_output,
+                analyst_output,
+            )
+            if isinstance(implementation_result, FinalOutput):
+                final_output = implementation_result
+                self._emit(verbose, "final assembly complete")
+                return final_output
+            implementation_output = implementation_result
+            self._emit(verbose, "implementation planner complete")
+
+            self._emit(verbose, "starting reviewer")
+            reviewer_result = self._run_reviewer(
+                state,
+                trace,
+                user_task,
+                planner_output,
+                analyst_output,
+                implementation_output,
+            )
+            if isinstance(reviewer_result, FinalOutput):
+                final_output = reviewer_result
+                self._emit(verbose, "final assembly complete")
+                return final_output
+            reviewer_output = reviewer_result
+            self._emit(verbose, "reviewer complete")
+
+            final_output = self._assemble_final_output(
+                user_task,
+                planner_output,
+                analyst_output,
+                implementation_output,
+                reviewer_output,
+            )
+            state.attach_final_output(final_output)
+            trace["final_output"] = final_output.model_dump(mode="json")
             self._emit(verbose, "final assembly complete")
-            return planner_result
-        planner_output = planner_result
-        self._emit(verbose, "planner complete")
-
-        self._emit(verbose, "starting analyst")
-        analyst_result = self._run_analyst(state, repo_path, user_task, planner_output, verbose)
-        if isinstance(analyst_result, FinalOutput):
-            self._emit(verbose, "final assembly complete")
-            return analyst_result
-        analyst_output = analyst_result
-        self._emit(verbose, "analyst complete")
-
-        self._emit(verbose, "starting implementation planner")
-        implementation_result = self._run_implementation_planner(
-            state,
-            user_task,
-            planner_output,
-            analyst_output,
-        )
-        if isinstance(implementation_result, FinalOutput):
-            self._emit(verbose, "final assembly complete")
-            return implementation_result
-        implementation_output = implementation_result
-        self._emit(verbose, "implementation planner complete")
-
-        self._emit(verbose, "starting reviewer")
-        reviewer_result = self._run_reviewer(
-            state,
-            user_task,
-            planner_output,
-            analyst_output,
-            implementation_output,
-        )
-        if isinstance(reviewer_result, FinalOutput):
-            self._emit(verbose, "final assembly complete")
-            return reviewer_result
-        reviewer_output = reviewer_result
-        self._emit(verbose, "reviewer complete")
-
-        final_output = self._assemble_final_output(
-            user_task,
-            planner_output,
-            analyst_output,
-            implementation_output,
-            reviewer_output,
-        )
-        state.attach_final_output(final_output)
-        self._emit(verbose, "final assembly complete")
-        return final_output
+            return final_output
+        except Exception as exc:
+            final_output = self._build_failure_output(
+                state,
+                trace,
+                task_summary=user_task,
+                final_response="The pipeline encountered an unexpected error before completion.",
+                reviewer_notes=[f"Unexpected pipeline error: {exc}"],
+                status=AgentStatus.FAILURE,
+                confidence=0.0,
+                failing_stage="pipeline",
+            )
+            return final_output
+        finally:
+            self._finalize_run_artifacts(
+                state=state,
+                trace=trace,
+                artifact_dir=artifact_dir,
+                notes_path=notes_path,
+                final_output=state.final_output or final_output,
+                started_at=started_at,
+            )
 
     def start(self, repo_path: str, user_task: str, verbose: bool = False) -> FinalOutput:
         """Compatibility wrapper for the fixed pipeline entrypoint."""
 
         return self.run(repo_path=repo_path, user_task=user_task, verbose=verbose)
 
-    def _run_planner(self, state: RunState, user_task: str) -> PlannerOutput | FinalOutput:
+    def _run_planner(
+        self,
+        state: RunState,
+        trace: dict[str, Any],
+        user_task: str,
+    ) -> PlannerOutput | FinalOutput:
         """Run the planner stage and stop early for unsupported tasks."""
+
+        stage_entry = self._start_stage(trace, "planner")
+        attempt = self._start_attempt(stage_entry, "initial")
 
         try:
             planner_output = self.planner.run(user_task)
         except Exception as exc:
+            self._finish_attempt(attempt, status="failure", error=str(exc))
+            self._finish_stage(stage_entry, status="failure")
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Planner stage failed before a valid routing decision could be produced.",
                 reviewer_notes=[f"Planner error: {exc}"],
@@ -125,6 +207,17 @@ class Pipeline:
             tool_name="planner_stage",
             status=planner_output.status.value,
             input_summary="initial planner execution",
+        )
+
+        self._finish_attempt(
+            attempt,
+            status=planner_output.status.value,
+            output=planner_output.model_dump(mode="json"),
+        )
+        self._finish_stage(
+            stage_entry,
+            status=planner_output.status.value,
+            output=planner_output.model_dump(mode="json"),
         )
 
         if planner_output.task_type == "unsupported" or planner_output.confidence < 0.3:
@@ -143,6 +236,7 @@ class Pipeline:
                 status=AgentStatus.PARTIAL,
             )
             state.attach_final_output(final_output)
+            trace["final_output"] = final_output.model_dump(mode="json")
             return final_output
 
         return planner_output
@@ -150,6 +244,7 @@ class Pipeline:
     def _run_analyst(
         self,
         state: RunState,
+        trace: dict[str, Any],
         repo_path: str,
         user_task: str,
         planner_output: PlannerOutput,
@@ -157,11 +252,22 @@ class Pipeline:
     ) -> AnalystOutput | FinalOutput:
         """Run the analyst stage with one broadened retry if evidence is weak."""
 
+        stage_entry = self._start_stage(trace, "analyst")
+        attempt = self._start_attempt(stage_entry, "initial")
+
         try:
-            analyst_output = self.analyst.run(repo_path, user_task, planner_output)
+            analyst_output = self.analyst.run(
+                repo_path,
+                user_task,
+                planner_output,
+                note_path=state.notes_path,
+            )
         except Exception as exc:
+            self._finish_attempt(attempt, status="failure", error=str(exc))
+            self._finish_stage(stage_entry, status="failure")
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Analyst stage failed before grounded evidence could be collected.",
                 reviewer_notes=[f"Analyst error: {exc}"],
@@ -170,15 +276,42 @@ class Pipeline:
                 failing_stage="analyst",
             )
 
+        self._finish_attempt(
+            attempt,
+            status=analyst_output.status.value,
+            output=analyst_output.model_dump(mode="json"),
+        )
+
         analyst_retry_used = False
         if self._analyst_output_is_weak(analyst_output):
             analyst_retry_used = True
             self._emit(verbose, "analyst retry triggered")
+            retry_reason = "weak evidence triggered broadened retry"
+            trace["retries"].append(
+                {
+                    "stage": "analyst",
+                    "reason": retry_reason,
+                    "triggered_at": datetime.utcnow().isoformat(),
+                }
+            )
             broadened_task = self._build_broadened_analyst_task(user_task, planner_output)
+            retry_attempt = self._start_attempt(stage_entry, "broadened_retry")
             try:
-                retry_output = self.analyst.run(repo_path, broadened_task, planner_output)
-            except Exception:
+                retry_output = self.analyst.run(
+                    repo_path,
+                    broadened_task,
+                    planner_output,
+                    note_path=state.notes_path,
+                )
+                self._finish_attempt(
+                    retry_attempt,
+                    status=retry_output.status.value,
+                    output=retry_output.model_dump(mode="json"),
+                )
+            except Exception as exc:
                 retry_output = analyst_output
+                self._finish_attempt(retry_attempt, status="failure", error=str(exc))
+
             if self._analyst_strength(retry_output) > self._analyst_strength(analyst_output):
                 analyst_output = retry_output
 
@@ -191,9 +324,16 @@ class Pipeline:
             input_summary="analyst execution with retry" if analyst_retry_used else "initial analyst execution",
         )
 
+        self._finish_stage(
+            stage_entry,
+            status=analyst_output.status.value,
+            output=analyst_output.model_dump(mode="json"),
+        )
+
         if analyst_output.status == AgentStatus.FAILURE:
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Analyst stage could not produce a usable evidence package.",
                 reviewer_notes=[analyst_output.reasoning_summary or "Analyst failed."],
@@ -207,11 +347,15 @@ class Pipeline:
     def _run_implementation_planner(
         self,
         state: RunState,
+        trace: dict[str, Any],
         user_task: str,
         planner_output: PlannerOutput,
         analyst_output: AnalystOutput,
     ) -> ImplementationPlannerOutput | FinalOutput:
         """Run the implementation planner stage."""
+
+        stage_entry = self._start_stage(trace, "implementation_planner")
+        attempt = self._start_attempt(stage_entry, "initial")
 
         try:
             implementation_output = self.implementation_planner.run(
@@ -220,8 +364,11 @@ class Pipeline:
                 analyst_output,
             )
         except Exception as exc:
+            self._finish_attempt(attempt, status="failure", error=str(exc))
+            self._finish_stage(stage_entry, status="failure")
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Implementation planning failed before a structured plan could be assembled.",
                 reviewer_notes=[f"Implementation planner error: {exc}"],
@@ -239,9 +386,21 @@ class Pipeline:
             input_summary="implementation planning execution",
         )
 
+        self._finish_attempt(
+            attempt,
+            status=implementation_output.status.value,
+            output=implementation_output.model_dump(mode="json"),
+        )
+        self._finish_stage(
+            stage_entry,
+            status=implementation_output.status.value,
+            output=implementation_output.model_dump(mode="json"),
+        )
+
         if implementation_output.status == AgentStatus.FAILURE:
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Implementation planning produced a failure result and the pipeline stopped before review.",
                 reviewer_notes=[implementation_output.reasoning_summary or "Implementation planning failed."],
@@ -255,12 +414,16 @@ class Pipeline:
     def _run_reviewer(
         self,
         state: RunState,
+        trace: dict[str, Any],
         user_task: str,
         planner_output: PlannerOutput,
         analyst_output: AnalystOutput,
         implementation_output: ImplementationPlannerOutput,
     ) -> ReviewerOutput | FinalOutput:
         """Run the reviewer stage."""
+
+        stage_entry = self._start_stage(trace, "reviewer")
+        attempt = self._start_attempt(stage_entry, "initial")
 
         try:
             reviewer_output = self.reviewer.run(
@@ -270,8 +433,11 @@ class Pipeline:
                 implementation_output,
             )
         except Exception as exc:
+            self._finish_attempt(attempt, status="failure", error=str(exc))
+            self._finish_stage(stage_entry, status="failure")
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Reviewer stage failed before a final assessment could be produced.",
                 reviewer_notes=[f"Reviewer error: {exc}"],
@@ -287,9 +453,21 @@ class Pipeline:
             input_summary="review execution",
         )
 
+        self._finish_attempt(
+            attempt,
+            status=reviewer_output.status.value,
+            output=reviewer_output.model_dump(mode="json"),
+        )
+        self._finish_stage(
+            stage_entry,
+            status=reviewer_output.status.value,
+            output=reviewer_output.model_dump(mode="json"),
+        )
+
         if reviewer_output.status == AgentStatus.FAILURE:
             return self._build_failure_output(
                 state,
+                trace,
                 task_summary=user_task,
                 final_response="Reviewer marked the overall result as unsupported.",
                 reviewer_notes=[reviewer_output.final_assessment or reviewer_output.reasoning_summary],
@@ -390,6 +568,7 @@ class Pipeline:
     def _build_failure_output(
         self,
         state: RunState,
+        trace: dict[str, Any],
         task_summary: str,
         final_response: str,
         reviewer_notes: list[str],
@@ -414,6 +593,7 @@ class Pipeline:
             input_summary="pipeline aborted",
             error=reviewer_notes[0] if reviewer_notes else None,
         )
+        trace["final_output"] = final_output.model_dump(mode="json")
         state.mark_failed()
         return final_output
 
@@ -448,10 +628,200 @@ class Pipeline:
             f"files relevant to the {planner_output.task_type} path."
         )
 
-    def _build_run_id(self) -> str:
-        """Build a lightweight in-memory run identifier."""
+    def _build_run_id(self, started_at: datetime) -> str:
+        """Build a lightweight run identifier."""
 
-        return datetime.utcnow().strftime("run-%Y%m%d%H%M%S")
+        return started_at.strftime("run-%Y%m%d%H%M%S%f")
+
+    def _initialize_trace(
+        self,
+        *,
+        run_id: str,
+        repo_path: str,
+        user_task: str,
+        verbose: bool,
+        started_at: datetime,
+        artifact_dir: Path,
+        notes_path: Path,
+    ) -> dict[str, Any]:
+        """Create the base trace structure for a run."""
+
+        return {
+            "run_id": run_id,
+            "user_task": user_task,
+            "repo_path": repo_path,
+            "verbose": verbose,
+            "artifact_dir": str(artifact_dir),
+            "notes_path": str(notes_path),
+            "started_at": started_at.isoformat(),
+            "ended_at": None,
+            "duration_ms": None,
+            "status": RunLifecycleStatus.IN_PROGRESS.value,
+            "stage_order": [
+                "planner",
+                "analyst",
+                "implementation_planner",
+                "reviewer",
+            ],
+            "stages": {},
+            "retries": [],
+            "tool_history": [],
+            "inspected_files": [],
+            "state_snapshot": {},
+            "final_output": None,
+        }
+
+    def _write_input_artifact(
+        self,
+        artifact_dir: Path,
+        state: RunState,
+        verbose: bool,
+        started_at: datetime,
+    ) -> None:
+        """Write the initial run input artifact."""
+
+        write_json_file(
+            artifact_dir / "input.json",
+            {
+                "run_id": state.run_id,
+                "user_task": state.user_task,
+                "repo_path": state.repo_path,
+                "verbose": verbose,
+                "started_at": started_at.isoformat(),
+                "notes_path": state.notes_path,
+            },
+        )
+
+    def _finalize_run_artifacts(
+        self,
+        *,
+        state: RunState,
+        trace: dict[str, Any],
+        artifact_dir: Path,
+        notes_path: Path,
+        final_output: FinalOutput | None,
+        started_at: datetime,
+    ) -> None:
+        """Write trace, final output, notes, and summary artifacts."""
+
+        ended_at = datetime.utcnow()
+        duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+        if final_output is not None and state.final_output is None:
+            state.attach_final_output(final_output)
+        elif final_output is None and state.final_output is not None:
+            final_output = state.final_output
+
+        trace["ended_at"] = ended_at.isoformat()
+        trace["duration_ms"] = duration_ms
+        trace["status"] = state.status.value
+        trace["tool_history"] = [entry.model_dump(mode="json") for entry in state.tool_history]
+        trace["inspected_files"] = state.inspected_files
+        trace["state_snapshot"] = state.to_serializable_dict()
+        if final_output is not None:
+            trace["final_output"] = final_output.model_dump(mode="json")
+
+        ensure_notes_file(notes_path)
+        write_json_file(artifact_dir / "trace.json", trace)
+
+        if final_output is not None:
+            write_json_file(artifact_dir / "final_output.json", final_output.model_dump(mode="json"))
+            summary = build_summary_markdown(
+                run_id=state.run_id,
+                repo_path=state.repo_path,
+                started_at=trace["started_at"],
+                ended_at=trace["ended_at"],
+                duration_ms=trace["duration_ms"],
+                task_summary=final_output.task_summary,
+                key_files=final_output.key_files,
+                final_response=final_output.final_response,
+                reviewer_notes=final_output.reviewer_notes,
+                confidence=final_output.confidence,
+                status=final_output.status.value,
+                stage_outcomes=self._stage_outcomes_for_summary(trace),
+            )
+            write_text_file(artifact_dir / "summary.md", summary)
+
+        notes_contents = read_text_if_exists(notes_path)
+        write_text_file(artifact_dir / "notes.md", notes_contents)
+
+    def _start_stage(self, trace: dict[str, Any], stage_name: str) -> dict[str, Any]:
+        """Create a stage entry in the trace."""
+
+        stage_entry = {
+            "name": stage_name,
+            "started_at": datetime.utcnow().isoformat(),
+            "ended_at": None,
+            "duration_ms": None,
+            "status": "in_progress",
+            "attempts": [],
+            "output": None,
+        }
+        trace["stages"][stage_name] = stage_entry
+        return stage_entry
+
+    def _finish_stage(
+        self,
+        stage_entry: dict[str, Any],
+        *,
+        status: str,
+        output: dict[str, Any] | None = None,
+    ) -> None:
+        """Finalize a stage trace entry."""
+
+        ended_at = datetime.utcnow()
+        started_at = datetime.fromisoformat(stage_entry["started_at"])
+        stage_entry["ended_at"] = ended_at.isoformat()
+        stage_entry["duration_ms"] = int((ended_at - started_at).total_seconds() * 1000)
+        stage_entry["status"] = status
+        if output is not None:
+            stage_entry["output"] = output
+
+    def _start_attempt(self, stage_entry: dict[str, Any], label: str) -> dict[str, Any]:
+        """Create a stage attempt record."""
+
+        attempt = {
+            "label": label,
+            "started_at": datetime.utcnow().isoformat(),
+            "ended_at": None,
+            "duration_ms": None,
+            "status": "in_progress",
+            "error": None,
+            "output": None,
+        }
+        stage_entry["attempts"].append(attempt)
+        return attempt
+
+    def _finish_attempt(
+        self,
+        attempt: dict[str, Any],
+        *,
+        status: str,
+        output: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Finalize a stage attempt record."""
+
+        ended_at = datetime.utcnow()
+        started_at = datetime.fromisoformat(attempt["started_at"])
+        attempt["ended_at"] = ended_at.isoformat()
+        attempt["duration_ms"] = int((ended_at - started_at).total_seconds() * 1000)
+        attempt["status"] = status
+        attempt["error"] = error
+        if output is not None:
+            attempt["output"] = output
+
+    def _stage_outcomes_for_summary(self, trace: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return concise stage outcomes for the summary markdown."""
+
+        return [
+            {
+                "name": stage_name,
+                "status": stage_data.get("status", "unknown"),
+                "duration_ms": stage_data.get("duration_ms"),
+            }
+            for stage_name, stage_data in trace["stages"].items()
+        ]
 
     def _unique(self, values: list[str]) -> list[str]:
         """Preserve list order while removing duplicates and empty values."""

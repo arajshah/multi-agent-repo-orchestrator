@@ -15,6 +15,8 @@ python main.py health
 python main.py run --repo . --task "Generate the minimal implementation plan for improving the Ollama health check flow in this repo."
 ```
 
+Each pipeline run writes artifacts under `runs/<timestamp>_<task-slug>/`, including structured trace data, a markdown summary, the final output JSON, and any collected notes.
+
 ## Ollama Requirements
 
 RepoPilot expects a local Ollama server running at `http://127.0.0.1:11434` by default and uses `qwen2.5-coder:7b` as the default model. You can override these with `OLLAMA_BASE_URL` and `OLLAMA_MODEL` if needed.
