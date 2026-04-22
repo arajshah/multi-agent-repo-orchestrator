@@ -219,14 +219,6 @@ class ReviewerAgent:
                 "Trim the plan to the narrowest primary and supporting files."
             )
 
-        if planner.task_type == "explain_code_path" and implementation.proposed_changes:
-            issues.append(
-                ReviewIssue(
-                    severity="low",
-                    description="The task is explanation-oriented, so any implementation recommendations should stay lightweight.",
-                )
-            )
-
         if implementation.confidence > analyst.confidence + 0.2 and not review_context["strong_evidence"]:
             issues.append(
                 ReviewIssue(

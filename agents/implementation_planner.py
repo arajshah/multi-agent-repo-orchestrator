@@ -361,7 +361,7 @@ class ImplementationPlannerAgent:
 
         files = evidence["grounded_code_files"]
         if planner.task_type == "implementation_plan":
-            return [
+            changes = [
                 f"Extend the primary feature logic in `{files[0]}` to support the requested behavior.",
                 (
                     f"Update adjacent logic in `{files[1]}` to keep control flow consistent."
@@ -369,6 +369,11 @@ class ImplementationPlannerAgent:
                     else "Update adjacent validation or state handling near the primary change point."
                 ),
             ]
+            if len(files) > 2:
+                changes.append(
+                    f"Add the smallest necessary supporting change in `{files[2]}` for the new flow."
+                )
+            return changes
         if planner.task_type == "minimal_files_to_change":
             return [
                 f"Constrain the change set to `{files[0]}` as the most likely primary edit location.",
@@ -407,6 +412,8 @@ class ImplementationPlannerAgent:
         steps = [f"Start with `{files[0]}` as the primary implementation file."]
         if len(files) > 1:
             steps.append(f"Update `{files[1]}` only if the primary change requires a supporting adjustment.")
+        if len(files) > 2:
+            steps.append(f"Touch `{files[2]}` only for the minimal supporting extension point.")
         steps.append("Implement the feature logic at a high level without expanding the change surface unnecessarily.")
         steps.append("Re-check assumptions and any test or documentation impact before execution.")
         return steps

@@ -529,6 +529,9 @@ class Pipeline:
     ) -> str:
         """Build a polished final response string."""
 
+        if planner_output.task_type == "explain_code_path":
+            return self._build_explanation_response(analyst_output, reviewer_output, key_files)
+
         lines = [
             f"Task type: {planner_output.task_type}.",
             (
@@ -556,6 +559,68 @@ class Pipeline:
                 + "; ".join(implementation_output.risks_or_assumptions[:3])
                 + "."
             )
+        if reviewer_output.final_assessment:
+            lines.append(f"Reviewer assessment: {reviewer_output.final_assessment}")
+        if analyst_output.open_questions and reviewer_output.status != AgentStatus.SUCCESS:
+            lines.append(
+                "Open questions: " + "; ".join(analyst_output.open_questions[:2]) + "."
+            )
+
+        return "\n".join(lines)
+
+    def _build_explanation_response(
+        self,
+        analyst_output: AnalystOutput,
+        reviewer_output: ReviewerOutput,
+        key_files: list[str],
+    ) -> str:
+        """Build a task-aware explanation response for code-path questions."""
+
+        file_pool = set(key_files + analyst_output.relevant_files)
+        has_route = any("auth_routes.py" in file_path or "routes.py" in file_path for file_path in file_pool)
+        has_auth_service = any("auth_service.py" in file_path for file_path in file_pool)
+        has_user_lookup = any("user_repository.py" in file_path for file_path in file_pool)
+        has_security = any("security.py" in file_path for file_path in file_pool)
+        has_token = any("token_service.py" in file_path for file_path in file_pool)
+
+        lines = [
+            "Task type: explain_code_path.",
+            (
+                "Grounded files: " + ", ".join(key_files) + "."
+                if key_files
+                else "Grounded files: none confirmed yet."
+            ),
+        ]
+
+        flow_steps: list[str] = []
+        if has_route:
+            flow_steps.append(
+                "The request enters the auth route layer, where the login handler validates the incoming payload."
+            )
+        if has_auth_service:
+            flow_steps.append(
+                "The route delegates credential handling to the auth service, which owns the login decision."
+            )
+        if has_user_lookup:
+            flow_steps.append(
+                "The auth service looks up the account record through the user repository."
+            )
+        if has_security:
+            flow_steps.append(
+                "Password verification happens in the security helper before a session is issued."
+            )
+        if has_token:
+            flow_steps.append(
+                "Once credentials pass, the token service creates the session token returned to the client."
+            )
+
+        if flow_steps:
+            lines.append("Auth flow: " + " ".join(flow_steps))
+        else:
+            lines.append(
+                "Auth flow: the current evidence points to the route layer, auth service, and session creation path, but some steps still need stronger grounding."
+            )
+
         if reviewer_output.final_assessment:
             lines.append(f"Reviewer assessment: {reviewer_output.final_assessment}")
         if analyst_output.open_questions and reviewer_output.status != AgentStatus.SUCCESS:

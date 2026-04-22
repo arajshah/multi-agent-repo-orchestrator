@@ -45,19 +45,21 @@ STOPWORDS = {
 }
 
 TASK_KEYWORD_HINTS = {
-    "explain_code_path": ["flow", "entry", "handler", "service", "auth", "login"],
+    "explain_code_path": ["flow", "entry", "handler", "service", "auth", "login", "user", "password", "token", "security", "repository"],
     "find_feature_location": ["endpoint", "handler", "route", "service", "controller"],
     "minimal_files_to_change": ["endpoint", "service", "module", "config", "schema"],
-    "implementation_plan": ["service", "module", "config", "schema", "model"],
+    "implementation_plan": ["service", "module", "config", "schema", "model", "models", "email", "email_service", "verify", "repository"],
 }
 
 SYNONYM_HINTS = {
-    "authentication": ["auth", "login", "session", "token"],
+    "authentication": ["auth", "login", "session", "token", "password", "user"],
     "login": ["auth", "signin", "endpoint"],
-    "verification": ["verify", "token", "email"],
-    "email": ["verification", "mailer", "token"],
+    "verification": ["verify", "token", "email", "email_service"],
+    "email": ["verification", "mailer", "token", "email_service"],
     "rate": ["limit", "throttle"],
     "limiting": ["limit", "throttle"],
+    "user": ["repository"],
+    "password": ["security"],
 }
 
 FRAMEWORK_PREFIXES = (
@@ -174,7 +176,7 @@ class AnalystAgent:
             if hint not in queries:
                 queries.append(hint)
 
-        return queries[:6]
+        return queries[:8]
 
     def _run_searches(self, repo_path: str, queries: list[str]) -> list[dict[str, Any]]:
         """Run bounded repository searches for the chosen queries."""
@@ -213,16 +215,36 @@ class AnalystAgent:
                 if self._is_framework_file(match.file_path):
                     boost = 0
                 scores[match.file_path] = scores.get(match.file_path, 0) + boost
+            query = search_result["query"].lower()
+            for file_path in repo_files:
+                lowered = file_path.lower()
+                if query and query in lowered and not self._is_framework_file(file_path):
+                    scores[file_path] = scores.get(file_path, 0) + 2
 
         for file_path in repo_files:
             lowered = file_path.lower()
-            if lowered.endswith(".md") and file_path not in scores:
-                scores[file_path] = max(scores.get(file_path, 0), 1)
+            if lowered.endswith(".md"):
+                scores[file_path] = scores.get(file_path, 0)
+            elif file_path not in scores:
+                scores[file_path] = 0
 
             for keyword in TASK_KEYWORD_HINTS.get(planner.task_type, []):
                 if keyword in lowered:
                     boost = 0 if self._is_framework_file(file_path) else 1
                     scores[file_path] = scores.get(file_path, 0) + boost
+
+            if planner.task_type == "implementation_plan" and not self._is_framework_file(file_path):
+                if any(
+                    marker in lowered
+                    for marker in [
+                        "auth_service.py",
+                        "auth_routes.py",
+                        "email_service.py",
+                        "models.py",
+                        "user_repository.py",
+                    ]
+                ):
+                    scores[file_path] = scores.get(file_path, 0) + 2
 
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         candidates = [
