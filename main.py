@@ -1,10 +1,12 @@
 """CLI entrypoint for RepoPilot."""
 
-from pathlib import Path
-
 import typer
 
 from config import get_config
+from orchestrator.pipeline import Pipeline
+from schemas.agent_schemas import AgentStatus
+from schemas.run_schemas import FinalOutput
+from utils.logging import build_log_message
 from utils.ollama_client import (
     OllamaClientError,
     check_ollama_server,
@@ -74,13 +76,36 @@ def health() -> None:
 
 
 @app.command()
-def run() -> None:
-    """Print a placeholder run message."""
+def run(
+    repo: str = typer.Option(..., "--repo", "-r", help="Repository path to inspect."),
+    task: str = typer.Option(..., "--task", "-t", help="User task to execute."),
+    verbose: bool = typer.Option(False, "--verbose", help="Print concise stage progress."),
+) -> None:
+    """Run the fixed multi-agent pipeline."""
 
-    config = get_config()
-    typer.echo(
-        "Run pipeline is not implemented yet. "
-        f"Future outputs will be stored in {Path(config.runs_directory).name}/."
+    pipeline = Pipeline(progress_callback=lambda message: typer.echo(build_log_message(message)))
+    result = pipeline.run(repo_path=repo, user_task=task, verbose=verbose)
+    typer.echo(_render_final_output(result))
+
+    if result.status == AgentStatus.FAILURE:
+        raise typer.Exit(code=1)
+
+
+def _render_final_output(result: FinalOutput) -> str:
+    """Format the final pipeline output for terminal display."""
+
+    key_files = ", ".join(result.key_files) if result.key_files else "none"
+    reviewer_notes = "\n".join(f"- {note}" for note in result.reviewer_notes) or "- none"
+
+    return (
+        f"Task summary: {result.task_summary}\n"
+        f"Key files: {key_files}\n\n"
+        "Final response:\n"
+        f"{result.final_response}\n\n"
+        "Reviewer notes:\n"
+        f"{reviewer_notes}\n\n"
+        f"Confidence: {result.confidence:.2f}\n"
+        f"Status: {result.status.value}"
     )
 
 
