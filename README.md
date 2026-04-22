@@ -2,6 +2,8 @@
 
 RepoPilot is a local multi-agent software engineering copilot built around a fixed role-specialized pipeline. It uses Ollama for local inference, inspects a target repository with a controlled tool layer, and produces grounded codebase explanations plus reviewer-checked implementation plans. The current project ships with a small demo backend in `demo_repo/` and a complete artifact trail for every run.
 
+![RepoPilot demo](docs/demo.gif)
+
 ## Key Features
 
 - Fixed four-stage pipeline: Planner -> Codebase Analyst -> Implementation Planner -> Reviewer
