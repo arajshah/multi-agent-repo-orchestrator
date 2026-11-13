@@ -15,7 +15,12 @@ def build_log_message(message: str) -> str:
 
 
 def build_run_slug(user_task: str, max_length: int = 48) -> str:
-    """Return a filesystem-safe slug for a run folder."""
+    """Return a filesystem-safe slug for a run folder.
+
+    Lowercases the task, replaces runs of non-alphanumeric characters
+    with a single hyphen, truncates to max_length, and falls back to
+    "run" when nothing usable remains.
+    """
 
     lowered = user_task.strip().lower()
     normalized = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
@@ -25,7 +30,11 @@ def build_run_slug(user_task: str, max_length: int = 48) -> str:
 
 
 def build_run_folder_name(user_task: str, started_at: datetime) -> str:
-    """Return a unique run folder name."""
+    """Return a unique run folder name.
+
+    Combines a timestamp with the slug of the user task so runs sort
+    chronologically and stay identifiable.
+    """
 
     timestamp = started_at.strftime("%Y-%m-%dT%H-%M-%S-%f")
     return f"{timestamp}_{build_run_slug(user_task)}"

@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 
 
+# Paths are derived from the repo root so runs and the demo repo resolve
+# regardless of the working directory the CLI is launched from.
 PROJECT_ROOT = Path(__file__).resolve().parent
 RUNS_DIRECTORY = PROJECT_ROOT / "runs"
 DEMO_REPO_DIRECTORY = PROJECT_ROOT / "demo_repo"
@@ -14,6 +16,7 @@ DEMO_REPO_DIRECTORY = PROJECT_ROOT / "demo_repo"
 class AppConfig:
     """Static configuration for the scaffolded project."""
 
+    # Set once at startup from defaults and environment variables.
     project_name: str
     ollama_base_url: str
     default_model_name: str

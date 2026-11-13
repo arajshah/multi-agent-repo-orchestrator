@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import requests
 
 
+# HTTP timeouts in seconds: short for health checks, longer for generation.
 DEFAULT_TIMEOUT_SECONDS = 5
 GENERATE_TIMEOUT_SECONDS = 30
 

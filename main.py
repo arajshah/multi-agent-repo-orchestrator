@@ -27,7 +27,11 @@ def main() -> None:
 
 @app.command()
 def health() -> None:
-    """Run local Ollama readiness checks."""
+    """Run local Ollama readiness checks.
+
+    Exits with a non-zero status when the server is unreachable, the
+    configured model is not installed, or the test generation fails.
+    """
 
     config = get_config()
     typer.echo(f"{config.project_name} health check")
@@ -81,7 +85,11 @@ def run(
     task: str = typer.Option(..., "--task", "-t", help="User task to execute."),
     verbose: bool = typer.Option(False, "--verbose", help="Print concise stage progress."),
 ) -> None:
-    """Run the fixed multi-agent pipeline."""
+    """Run the fixed multi-agent pipeline.
+
+    Inspects the repo at --repo for the --task, optionally printing
+    concise stage progress with --verbose.
+    """
 
     pipeline = Pipeline(progress_callback=lambda message: typer.echo(build_log_message(message)))
     result = pipeline.run(repo_path=repo, user_task=task, verbose=verbose)
