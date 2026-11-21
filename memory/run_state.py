@@ -1,4 +1,9 @@
-"""Lightweight helpers for in-memory run state."""
+"""Lightweight helpers for in-memory run state.
+
+Defines RunState, the mutable model that assembles one run in memory:
+it records the task, inspected files, agent outputs, tool history, and
+final output, and stamps updates as the pipeline progresses.
+"""
 
 from datetime import datetime
 
