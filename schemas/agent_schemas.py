@@ -1,4 +1,9 @@
-"""Pydantic schemas for agent-facing outputs."""
+"""Pydantic schemas for agent-facing outputs.
+
+Defines the structured output of each pipeline stage: planner, analyst,
+implementation planner, and reviewer, plus a shared base output with
+summaries, findings, confidence, and status.
+"""
 
 from enum import Enum
 from typing import TypeVar
