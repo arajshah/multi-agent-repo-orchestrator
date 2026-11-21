@@ -1,4 +1,9 @@
-"""Pydantic schemas for tool-facing outputs."""
+"""Pydantic schemas for tool-facing outputs.
+
+Covers the result shapes returned by the controlled tool layer: file
+listings, code search matches, file reads and chunks, and note writes,
+all built on a shared base output with a status and optional error.
+"""
 
 from enum import Enum
 
