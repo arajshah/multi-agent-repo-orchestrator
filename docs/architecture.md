@@ -1,5 +1,7 @@
 # Architecture Notes
 
+These notes describe how RepoPilot stages, tool layer, and data contracts fit together.
+
 RepoPilot is a fixed local multi-agent pipeline for repository analysis and planning. The system is intentionally explicit and deterministic: there is no dynamic agent graph, no background framework, and no hidden orchestration layer.
 
 ## Pipeline Stages
