@@ -1,4 +1,9 @@
-"""Writable note tool for scratch run output."""
+"""Writable note tool for scratch run output.
+
+Provides write_note, which appends text to a plain-text or markdown
+file, creating parent directories as needed, and record_note, a
+compatibility wrapper kept for the scaffolded package export.
+"""
 
 from pathlib import Path
 
