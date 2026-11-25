@@ -1,4 +1,8 @@
-"""Planner agent for task classification and workflow planning."""
+"""Planner agent for task classification and workflow planning.
+
+It classifies the incoming task and drafts the workflow the other agents
+follow.
+"""
 
 import json
 import re
