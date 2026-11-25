@@ -1,4 +1,7 @@
-"""Implementation planner agent for evidence-based engineering plans."""
+"""Implementation planner agent for evidence-based engineering plans.
+
+It turns the analyst's evidence into a concrete, ordered engineering plan.
+"""
 
 import json
 from typing import Any
