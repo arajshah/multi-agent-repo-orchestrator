@@ -1,4 +1,8 @@
-"""Read-only repository analysis tools."""
+"""Read-only repository analysis tools.
+
+Listing, reading, and searching stay read-only, so inspection never changes
+the repo under review.
+"""
 
 from pathlib import Path
 
