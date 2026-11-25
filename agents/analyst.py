@@ -1,4 +1,8 @@
-"""Codebase analyst agent for targeted repository inspection."""
+"""Codebase analyst agent for targeted repository inspection.
+
+It inspects the files a task touches and returns evidence snippets the
+planner can build on.
+"""
 
 import json
 import re
