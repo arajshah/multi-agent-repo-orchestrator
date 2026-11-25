@@ -1,4 +1,8 @@
-"""Reviewer agent for cross-stage quality checks."""
+"""Reviewer agent for cross-stage quality checks.
+
+It re-checks each stage's output against the task and files review issues
+where they disagree.
+"""
 
 import json
 from typing import Any
