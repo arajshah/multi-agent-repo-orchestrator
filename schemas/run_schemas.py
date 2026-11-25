@@ -1,4 +1,8 @@
-"""Pydantic schemas for run-level outputs."""
+"""Pydantic schemas for run-level outputs.
+
+Run records carry status, timestamps, and per-stage outputs for later
+inspection.
+"""
 
 from datetime import datetime
 from enum import Enum
